@@ -12,5 +12,6 @@ const databases = new sdk.Databases(client);
 const functions = new sdk.Functions(client);
 const storage = new sdk.Storage(client);
 const account = new sdk.Account(client);
+const users = new sdk.Users(client);
 
-module.exports = { client, databases, functions, storage, account, sdk };
+module.exports = { client, databases, functions, storage, account, users, sdk };

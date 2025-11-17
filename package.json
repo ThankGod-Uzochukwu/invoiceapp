@@ -1,13 +1,34 @@
 {
   "name": "appwrite-finance-backend-js",
   "version": "1.0.0",
+  "description": "REST API backend for finance management platform with Appwrite integration",
   "private": true,
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
+    "build": "echo 'No build step required'",
     "test": "jest --coverage",
-    "lint": "eslint ."
+    "test:watch": "jest --watch",
+    "test:verbose": "jest --verbose --coverage",
+    "lint": "eslint src/**/*.js",
+    "lint:fix": "eslint src/**/*.js --fix",
+    "setup": "bash setup.sh"
+  },
+  "keywords": [
+    "appwrite",
+    "finance",
+    "invoice",
+    "api",
+    "backend",
+    "nodejs",
+    "express"
+  ],
+  "author": "ThankGod Uzochukwu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ThankGod-Uzochukwu/invoiceapp.git"
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -24,5 +45,10 @@
     "nodemon": "^2.0.22",
     "eslint": "^8.37.0",
     "@types/jest": "^29.5.2"
+  },
+  "engines": {
+    "node": ">=14.0.0",
+    "npm": ">=6.0.0"
   }
 }
+

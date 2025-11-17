@@ -7,11 +7,16 @@ const { createInvoiceHandler, listInvoicesHandler, markPaidHandler, summaryHandl
 
 const router = express.Router();
 
+// Validation schema for invoice creation
 const createInvoiceSchema = z.object({
-  items: z.array(z.object({ description: z.string(), amount: z.number() })).min(1),
+  items: z.array(z.object({ 
+    description: z.string().min(1, 'Description is required'), 
+    amount: z.number().positive('Amount must be positive') 
+  })).min(1, 'At least one item is required'),
   country: z.string().optional(),
 });
 
+// All routes require authentication
 router.post('/', authenticate, validate(createInvoiceSchema), createInvoiceHandler);
 router.get('/', authenticate, listInvoicesHandler);
 router.post('/:id/pay', authenticate, markPaidHandler);

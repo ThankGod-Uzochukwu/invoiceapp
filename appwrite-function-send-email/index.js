@@ -1,34 +1,80 @@
-// Appwrite Function example: send email using Resend
-// This function expects event.payload to be a JSON string like { to, subject, body }
+// Appwrite Function: Send Email Notification using Resend
+// This function is deployed to Appwrite and triggered when invoices are paid
+// Expects event.payload to be a JSON string like { to, subject, body }
 
 const axios = require('axios');
 
 module.exports = async function (req, res) {
   try {
+    console.log('Email function triggered');
+    
+    // Parse payload
     const body = req && req.payload ? JSON.parse(req.payload) : {};
     const { to, subject, body: htmlBody } = body;
-    if (!to || !subject) return res.json({ success: false, error: 'missing to/subject' });
 
+    // Validate required fields
+    if (!to || !subject) {
+      console.error('Missing required fields: to or subject');
+      return res.json({ 
+        success: false, 
+        error: 'Missing required fields: to and subject are required' 
+      });
+    }
+
+    // Get Resend API key from environment
     const resendKey = process.env.RESEND_API_KEY;
-    if (!resendKey) return res.json({ success: false, error: 'missing RESEND_API_KEY' });
+    if (!resendKey) {
+      console.error('RESEND_API_KEY not configured');
+      return res.json({ 
+        success: false, 
+        error: 'RESEND_API_KEY not configured in function environment' 
+      });
+    }
 
-    const payload = {
-      from: 'no-reply@yourdomain.com',
-      to: [to],
+    const fromEmail = process.env.FROM_EMAIL || 'no-reply@yourdomain.com';
+
+    // Prepare email payload
+    const emailPayload = {
+      from: fromEmail,
+      to: Array.isArray(to) ? to : [to],
       subject,
-      html: `<p>${htmlBody}</p>`
+      html: htmlBody || `<p>${subject}</p>`
     };
 
-    const r = await axios.post('https://api.resend.com/emails', payload, {
+    console.log(`Sending email to ${to} with subject: ${subject}`);
+
+    // Send email via Resend API
+    const response = await axios.post('https://api.resend.com/emails', emailPayload, {
       headers: {
         'Authorization': `Bearer ${resendKey}`,
         'Content-Type': 'application/json'
-      }
+      },
+      timeout: 10000 // 10 second timeout
     });
 
-    return res.json({ success: true, data: r.data });
+    console.log('Email sent successfully:', response.data);
+    return res.json({ 
+      success: true, 
+      message: 'Email sent successfully',
+      data: response.data 
+    });
+
   } catch (err) {
-    console.error('Function error', err && err.response ? err.response.data : err.message || err);
-    return res.json({ success: false, error: err.message || 'failed' });
+    console.error('Email function error:', err);
+    
+    // Handle axios errors
+    if (err.response) {
+      console.error('Resend API error:', err.response.data);
+      return res.json({ 
+        success: false, 
+        error: 'Failed to send email via Resend API',
+        details: err.response.data 
+      });
+    }
+
+    return res.json({ 
+      success: false, 
+      error: err.message || 'Failed to send email' 
+    });
   }
 };

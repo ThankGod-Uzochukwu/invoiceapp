@@ -5,65 +5,199 @@ const { getVatRateForCountry, computeVAT } = require('../utils/vat');
 const DB_ID = process.env.APPWRITE_DATABASE_ID || '';
 const INVOICES_COLLECTION = process.env.APPWRITE_COLLECTION_INVOICES_ID || '';
 
+/**
+ * Create a new invoice with automatic VAT calculation
+ * @param {string} userId - The user's ID
+ * @param {Object} payload - Invoice data containing items and optional country
+ * @returns {Promise<Object>} Created invoice document
+ */
 async function createInvoice(userId, payload) {
-  const { items = [], country } = payload;
-  const subtotal = items.reduce((s, it) => s + Number(it.amount || 0), 0);
-  const rate = await getVatRateForCountry(country);
-  const { vat, total } = computeVAT(subtotal, rate);
+  try {
+    const { items = [], country } = payload;
+    
+    // Validate items
+    if (!items || items.length === 0) {
+      throw new Error('Invoice must contain at least one item');
+    }
 
-  const doc = await databases.createDocument(DB_ID, INVOICES_COLLECTION, sdk.ID.unique(), {
-    userId,
-    items,
-    subtotal,
-    vatRate: rate,
-    vat,
-    total,
-    paid: false,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  }, [
-    `user:${userId}`
-  ], [
-    `user:${userId}`
-  ]);
+    // Calculate subtotal
+    const subtotal = items.reduce((sum, item) => {
+      const amount = Number(item.amount || 0);
+      if (amount < 0) {
+        throw new Error('Item amounts must be positive');
+      }
+      return sum + amount;
+    }, 0);
 
-  return doc;
+    // Get VAT rate and compute totals
+    const rate = await getVatRateForCountry(country);
+    const { vat, total } = computeVAT(subtotal, rate);
+
+    console.log(`Creating invoice: subtotal=${subtotal}, VAT=${vat}, total=${total}`);
+
+    // Create document in Appwrite
+    const doc = await databases.createDocument(
+      DB_ID, 
+      INVOICES_COLLECTION, 
+      sdk.ID.unique(), 
+      {
+        userId,
+        items: JSON.stringify(items), // Store as JSON string
+        country: country || 'US',
+        subtotal,
+        vatRate: rate,
+        vat,
+        total,
+        paid: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      [`read("user:${userId}")`], // Read permissions
+      [`write("user:${userId}")`] // Write permissions
+    );
+
+    return {
+      ...doc,
+      items: typeof doc.items === 'string' ? JSON.parse(doc.items) : doc.items
+    };
+  } catch (err) {
+    console.error('Error in createInvoice:', err);
+    throw new Error(`Failed to create invoice: ${err.message}`);
+  }
 }
 
+/**
+ * List invoices for a user with optional status filter
+ * @param {string} userId - The user's ID
+ * @param {string} status - Optional filter: 'paid' or 'unpaid'
+ * @returns {Promise<Array>} List of invoice documents
+ */
 async function listInvoices(userId, status) {
-  const queries = [sdk.Query.equal('userId', userId)];
-  if (status === 'paid') queries.push(sdk.Query.equal('paid', true));
-  if (status === 'unpaid') queries.push(sdk.Query.equal('paid', false));
-  const res = await databases.listDocuments(DB_ID, INVOICES_COLLECTION, queries);
-  return res.documents;
+  try {
+    const queries = [sdk.Query.equal('userId', userId), sdk.Query.orderDesc('createdAt')];
+    
+    if (status === 'paid') {
+      queries.push(sdk.Query.equal('paid', true));
+    } else if (status === 'unpaid') {
+      queries.push(sdk.Query.equal('paid', false));
+    }
+
+    const res = await databases.listDocuments(DB_ID, INVOICES_COLLECTION, queries);
+    
+    // Parse items if stored as JSON string
+    return res.documents.map(doc => ({
+      ...doc,
+      items: typeof doc.items === 'string' ? JSON.parse(doc.items) : doc.items
+    }));
+  } catch (err) {
+    console.error('Error in listInvoices:', err);
+    throw new Error(`Failed to list invoices: ${err.message}`);
+  }
 }
 
+/**
+ * Mark an invoice as paid and recompute VAT
+ * @param {string} userId - The user's ID
+ * @param {string} invoiceId - The invoice ID
+ * @returns {Promise<Object>} Updated invoice document
+ */
 async function markInvoicePaid(userId, invoiceId) {
-  const invoice = await databases.getDocument(DB_ID, INVOICES_COLLECTION, invoiceId);
-  if (!invoice || invoice.userId !== userId) throw new Error('Not found or unauthorized');
+  try {
+    // Get existing invoice
+    const invoice = await databases.getDocument(DB_ID, INVOICES_COLLECTION, invoiceId);
+    
+    // Verify ownership
+    if (!invoice || invoice.userId !== userId) {
+      throw new Error('Not found or unauthorized');
+    }
 
-  const subtotal = Number(invoice.subtotal || 0);
-  const rate = Number(invoice.vatRate || process.env.DEFAULT_VAT_RATE || 0.075);
-  const { vat, total } = computeVAT(subtotal, rate);
+    // Check if already paid
+    if (invoice.paid) {
+      console.log(`Invoice ${invoiceId} is already marked as paid`);
+      return {
+        ...invoice,
+        items: typeof invoice.items === 'string' ? JSON.parse(invoice.items) : invoice.items
+      };
+    }
 
-  const updated = await databases.updateDocument(DB_ID, INVOICES_COLLECTION, invoiceId, {
-    ...invoice,
-    paid: true,
-    vat,
-    total,
-    vatRate: rate,
-    updatedAt: new Date().toISOString(),
-  });
+    // Recompute VAT
+    const subtotal = Number(invoice.subtotal || 0);
+    const rate = Number(invoice.vatRate || process.env.DEFAULT_VAT_RATE || 0.075);
+    const { vat, total } = computeVAT(subtotal, rate);
 
-  return updated;
+    console.log(`Marking invoice ${invoiceId} as paid: subtotal=${subtotal}, VAT=${vat}, total=${total}`);
+
+    // Update document
+    const updated = await databases.updateDocument(
+      DB_ID, 
+      INVOICES_COLLECTION, 
+      invoiceId, 
+      {
+        paid: true,
+        vat,
+        total,
+        vatRate: rate,
+        updatedAt: new Date().toISOString(),
+        paidAt: new Date().toISOString()
+      }
+    );
+
+    return {
+      ...updated,
+      items: typeof updated.items === 'string' ? JSON.parse(updated.items) : updated.items
+    };
+  } catch (err) {
+    console.error('Error in markInvoicePaid:', err);
+    throw new Error(`Failed to mark invoice as paid: ${err.message}`);
+  }
 }
 
+/**
+ * Get financial summary for a user
+ * @param {string} userId - The user's ID
+ * @returns {Promise<Object>} Summary with revenue, VAT, and outstanding invoices
+ */
 async function getSummary(userId) {
-  const all = await listInvoices(userId);
-  const totalRevenue = all.reduce((s, i) => s + Number(i.total || 0), 0);
-  const totalVat = all.reduce((s, i) => s + Number(i.vat || 0), 0);
-  const outstanding = all.filter(i => !i.paid).length;
-  return { totalRevenue, totalVat, outstanding };
+  try {
+    const allInvoices = await listInvoices(userId);
+    
+    const summary = {
+      totalRevenue: 0,
+      totalVat: 0,
+      outstanding: 0,
+      paid: 0,
+      total: allInvoices.length
+    };
+
+    allInvoices.forEach(invoice => {
+      const total = Number(invoice.total || 0);
+      const vat = Number(invoice.vat || 0);
+      
+      summary.totalRevenue += total;
+      summary.totalVat += vat;
+      
+      if (invoice.paid) {
+        summary.paid += 1;
+      } else {
+        summary.outstanding += 1;
+      }
+    });
+
+    // Round to 2 decimal places
+    summary.totalRevenue = Math.round(summary.totalRevenue * 100) / 100;
+    summary.totalVat = Math.round(summary.totalVat * 100) / 100;
+
+    console.log(`Summary for user ${userId}:`, summary);
+    return summary;
+  } catch (err) {
+    console.error('Error in getSummary:', err);
+    throw new Error(`Failed to generate summary: ${err.message}`);
+  }
 }
 
-module.exports = { createInvoice, listInvoices, markInvoicePaid, getSummary };
+module.exports = { 
+  createInvoice, 
+  listInvoices, 
+  markInvoicePaid, 
+  getSummary 
+};
