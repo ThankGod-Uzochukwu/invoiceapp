@@ -67,8 +67,8 @@ async function loginHandler(req, res) {
     
     const userAccount = new Account(userClient);
 
-    // Create email session
-    const session = await userAccount.createEmailPasswordSession(email, password);
+    // Create email session (correct method name for node-appwrite)
+    const session = await userAccount.createEmailSession(email, password);
     
     console.log('✅ Session created:', session.$id);
 
